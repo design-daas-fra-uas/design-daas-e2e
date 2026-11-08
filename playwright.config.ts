@@ -1,0 +1,47 @@
+import { defineConfig, devices } from '@playwright/test';
+
+import { env, storageStatePath } from './tests/support/env';
+
+// Projects:
+//   setup   - logs in the test user and admin once and saves their sessions
+//   public  - pages without login (login form, registration, 404, route guards)
+//   user    - user dashboard and monitoring, with the saved user session
+//   admin   - admin dashboard, settings and monitoring, with the saved admin session
+//   session - login/logout flows with fresh logins; runs last because logging
+//             out ends sessions on the server
+export default defineConfig({
+  testDir: './tests',
+  // One stack with real VMs behind it: run one test at a time.
+  workers: 1,
+  fullyParallel: false,
+  forbidOnly: !!process.env.CI,
+  retries: 0,
+  timeout: 60_000,
+  expect: { timeout: 15_000 },
+  reporter: [['list'], ['html', { open: 'never' }]],
+  use: {
+    ...devices['Desktop Chrome'],
+    baseURL: env.baseUrl,
+    ignoreHTTPSErrors: env.ignoreHttpsErrors,
+    locale: 'en-US',
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
+  },
+  projects: [
+    { name: 'setup', testMatch: /auth\.setup\.ts/ },
+    { name: 'public', testDir: './tests/public' },
+    {
+      name: 'user',
+      testDir: './tests/user',
+      dependencies: ['setup'],
+      use: { storageState: storageStatePath('user') },
+    },
+    {
+      name: 'admin',
+      testDir: './tests/admin',
+      dependencies: ['setup'],
+      use: { storageState: storageStatePath('admin') },
+    },
+    { name: 'session', testDir: './tests/session', dependencies: ['public', 'user', 'admin'] },
+  ],
+});
