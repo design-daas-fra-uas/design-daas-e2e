@@ -17,7 +17,7 @@ Requirements: Node.js 18 or newer, plus a running stack (`make install` in `desi
 
 ```bash
 npm install
-npm run install:browsers     # downloads Playwright's Chromium (once)
+npm run install:browsers     # downloads Playwright's Chromium into node_modules (once)
 cp .env.example .env         # then edit .env
 ```
 
@@ -32,6 +32,11 @@ cp .env.example .env         # then edit .env
   (`ADMIN_EMAIL` / `ADMIN_PASSWORD` from `daas.env`).
 - `E2E_ALLOW_START_STOP`, `E2E_OBJECT_ID`, `E2E_START_TIMEOUT`: opt-in test that really
   starts and stops an object (VM/container) of the test user.
+
+Chromium is kept inside `node_modules` (`PLAYWRIGHT_BROWSERS_PATH=0`, also set in
+`playwright.config.ts`), so the tests work for any system user. Run them as the user that
+owns this folder, though: a run as root leaves root-owned `test-results/` and
+`playwright-report/` behind, which the next normal run cannot overwrite.
 
 Tests that need a login are **skipped** (not failed) while their account is empty.
 `.env` is git-ignored, so passwords never end up in the repository.

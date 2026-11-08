@@ -2,6 +2,10 @@ import { defineConfig, devices } from '@playwright/test';
 
 import { env, storageStatePath } from './tests/support/env';
 
+// Use the Chromium inside node_modules (installed by `npm run install:browsers`),
+// so the tests run the same for every system user (e.g. also with sudo/root).
+process.env.PLAYWRIGHT_BROWSERS_PATH ??= '0';
+
 // Projects:
 //   setup   - logs in the test user and admin once and saves their sessions
 //   public  - pages without login (login form, registration, 404, route guards)

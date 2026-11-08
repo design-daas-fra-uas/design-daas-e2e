@@ -70,6 +70,8 @@ test.describe('admin pages', () => {
 
   test('every quick link on the admin dashboard opens its page', async ({ page }) => {
     await page.goto(ROUTES.admin.root);
+    // evaluateAll does not wait, so first wait for the (lazy-loaded) page's last quick link.
+    await expect(page.getByRole('link', { name: en.backToDashboard })).toBeVisible();
     const links = page.locator('#dashboardAdmin a[href^="/dashboard"]');
     const hrefs = await links.evaluateAll((elements) => elements.map((element) => element.getAttribute('href')!));
     expect(hrefs.length).toBeGreaterThan(5);
