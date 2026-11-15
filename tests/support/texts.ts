@@ -40,11 +40,11 @@ export const en = {
   goToAdminDashboard: 'Admin Dashboard',
 
   monitoringOverview: 'Monitoring - Overview',
-  userManagement: 'User management',
+  administration: 'Administration',
   admins: 'Admins',
   users: 'Users',
   choose: 'Choose',
-  backToDashboard: 'Back to the dashboard',
+  back: 'Back',
   renderError: 'Something went wrong.',
 };
 

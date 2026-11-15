@@ -11,16 +11,17 @@ test.describe('admin dashboard', () => {
     await page.goto(ROUTES.dashboard);
     await page.getByRole('button', { name: en.goToAdminDashboard }).click();
     await expect(page).toHaveURL(new RegExp(`${ROUTES.admin.root}$`));
-    await expect(pageTitle(page)).toHaveText(en.userManagement);
+    await expect(pageTitle(page)).toHaveText(en.administration);
   });
 
   test('lists admins and users and has the quick links', async ({ page }) => {
     await page.goto(ROUTES.admin.root);
     await expect(page.getByRole('status')).toHaveCount(0, { timeout: 30_000 });
-    await expect(page.getByRole('heading', { name: en.admins, exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: en.users, exact: true })).toBeVisible();
+    // The section headings carry a count badge, e.g. "Admins 2".
+    await expect(page.getByRole('heading', { name: new RegExp(`^${en.admins}\\b`) })).toBeVisible();
+    await expect(page.getByRole('heading', { name: new RegExp(`^${en.users}\\b`) })).toBeVisible();
     await expect(page.getByRole('alert').filter({ hasText: 'Could not load' })).toHaveCount(0);
-    await expect(page.getByRole('link', { name: en.backToDashboard })).toBeVisible();
+    await expect(page.getByRole('link', { name: en.back, exact: true })).toBeVisible();
     await expectNoRenderError(page);
   });
 
@@ -70,8 +71,8 @@ test.describe('admin pages', () => {
 
   test('every quick link on the admin dashboard opens its page', async ({ page }) => {
     await page.goto(ROUTES.admin.root);
-    // evaluateAll does not wait, so first wait for the (lazy-loaded) page's last quick link.
-    await expect(page.getByRole('link', { name: en.backToDashboard })).toBeVisible();
+    // evaluateAll does not wait, so first wait for the (lazy-loaded) page's last link section.
+    await expect(page.locator('#dashboardAdmin .link-section').last()).toBeVisible();
     const links = page.locator('#dashboardAdmin a[href^="/dashboard"]');
     const hrefs = await links.evaluateAll((elements) => elements.map((element) => element.getAttribute('href')!));
     expect(hrefs.length).toBeGreaterThan(5);
