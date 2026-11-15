@@ -68,9 +68,26 @@ test.describe('user dashboard', () => {
   });
 
   test('selecting an environment enables its buttons', async ({ page }) => {
+    // A new test account owns no environment, and creating one would build a real
+    // VM or container. Without one, add a sample environment of the first available
+    // object to the real dashboard answer; the buttons only depend on the selection.
+    await page.route('**/monitoring/dashboard_info', async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      const info = body?.response_data?.dashboardinfo;
+      if (info && (info.available_environments ?? []).length === 0 && (info.available_objects ?? []).length > 0) {
+        const object = info.available_objects[0];
+        info.available_environments = [
+          { id_env: 'e2e-sample', id_object: object.id_object, id_owner: object.id_owner, name: 'e2e-sample' },
+        ];
+      }
+      await route.fulfill({ response, json: body });
+    });
+    await openDashboard(page);
+
     const environments = panel(page, en.availableEnvironments);
     const select = environments.locator('#available-environments');
-    test.skip((await select.count()) === 0, 'The test user has no environments');
+    test.skip((await select.count()) === 0, 'The test user has neither environments nor objects');
 
     const startButton = environments.getByRole('button', { name: en.start, exact: true });
     const stopButton = environments.getByRole('button', { name: en.stop, exact: true });
