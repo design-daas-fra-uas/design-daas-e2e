@@ -9,11 +9,19 @@ test.skip(!hasAccount('admin'), missingAccountMessage('admin'));
 // and two tabs of DaaS actions on container objects.
 
 const tab = (page: Page, name: string) => page.getByRole('tab', { name, exact: true });
-const field = (page: Page, name: string) => page.getByRole('textbox', { name, exact: true });
+// Visible input of the open form by its label (text, number or dropdown alike).
+const field = (page: Page, name: string) => page.getByLabel(name, { exact: true }).filter({ visible: true });
 const submit = (page: Page) => page.getByRole('button', { name: 'Submit', exact: true });
 const successAlert = (page: Page) => page.locator('.request-success-alert');
 const failAlert = (page: Page) => page.locator('.request-fail-alert');
 const result = (page: Page) => page.locator('.action-result');
+
+// Types an object ID; leaving the field closes the object list, which would cover the form below.
+async function enterObjectId(page: Page, value: string) {
+  const input = field(page, 'Object ID');
+  await input.fill(value);
+  await input.blur();
+}
 
 async function openTab(page: Page, name: string) {
   await page.goto(ROUTES.admin.docker);
@@ -84,7 +92,7 @@ test.describe('docker running containers', () => {
 test.describe('docker image actions', () => {
   test('inspecting an unknown object reports that it does not exist', async ({ page }) => {
     await openAction(page, 'Manage images', 'Image inspect');
-    await field(page, 'ID').fill('zz-e2e-no-such-object');
+    await enterObjectId(page, 'zz-e2e-no-such-object');
     await submit(page).click();
     await expect(failAlert(page)).toContainText('not found');
     await expect(result(page)).toHaveCount(0);
@@ -93,7 +101,7 @@ test.describe('docker image actions', () => {
   test('inspects a container object', async ({ page }) => {
     test.skip(!env.containerId, 'E2E_CONTAINER_ID is not set');
     await openAction(page, 'Manage images', 'Image inspect');
-    await field(page, 'ID').fill(env.containerId);
+    await enterObjectId(page, env.containerId);
     await submit(page).click();
     await expect(successAlert(page)).toBeVisible();
     await expect(result(page)).toContainText('Architecture');
@@ -102,17 +110,88 @@ test.describe('docker image actions', () => {
   test('both create forms ask for the hardware the backend requires', async ({ page }) => {
     for (const action of ['Image create', 'Root Image create']) {
       await openAction(page, 'Manage images', action);
-      for (const name of ['Cores', 'Memory Size', 'Hard Disk Size']) {
-        await expect(field(page, name)).toBeVisible();
-      }
+      // Whole numbers, memory and disk in GiB, with sensible defaults.
+      await expect(field(page, 'Cores')).toHaveValue('2');
+      await expect(field(page, 'Memory (GiB)')).toHaveValue('4');
+      await expect(field(page, 'Hard disk (GiB)')).toHaveValue('8');
+      // The resolution is picked from the sizes the viewer offers.
+      await expect(field(page, 'Resolution')).toHaveValue('max');
+      await expect(field(page, 'Resolution').locator('option')).toContainText(['Maximize (fit the viewer window)', '1920x1080']);
       // Containers are reached through their own VNC server by default.
       await expect(page.getByRole('combobox').filter({ hasText: 'Instance VNC' })).toHaveValue('instvnc');
     }
   });
 
+  test('rejects hardware values that are not whole numbers from 1', async ({ page }) => {
+    await openAction(page, 'Manage images', 'Root Image create');
+    await enterObjectId(page, 'zz-e2e-never-created');
+    await field(page, 'Display name').fill('never created');
+    const memory = field(page, 'Memory (GiB)');
+    for (const bad of ['0', '-2', '2.5']) {
+      await memory.fill(bad);
+      await memory.blur();
+      await expect(page.getByText('Enter a whole number from 1 up.')).toBeVisible();
+      await expect(submit(page)).toBeDisabled();
+    }
+    await memory.fill('6');
+    await expect(page.getByText('Enter a whole number from 1 up.')).toHaveCount(0);
+    await expect(submit(page)).toBeEnabled();
+  });
+
+  test('offers the existing container objects in a searchable list', async ({ page }) => {
+    test.skip(!env.containerId, 'E2E_CONTAINER_ID is not set');
+    await openAction(page, 'Manage images', 'Image inspect');
+    const input = page.getByRole('combobox', { name: 'Object ID' });
+    await input.click();
+    const list = page.getByRole('listbox').filter({ visible: true });
+    const options = list.getByRole('option');
+    await expect(options.first()).toBeVisible();
+
+    // Only DaaS container objects: no VMs, no plain images ("sha256:...").
+    const ids = await list.locator('.combobox-option-value').allInnerTexts();
+    expect(ids).toContain(env.containerId);
+    expect(ids.every((value) => !value.startsWith('sha256:'))).toBe(true);
+    expect(ids).not.toContain('templateDeb12');
+
+    // Searching narrows the list; Enter picks the highlighted object.
+    await input.fill(env.containerId.slice(0, -1));
+    await expect(options.filter({ hasText: env.containerId })).toHaveCount(1);
+    await expect(list.locator('mark').first()).toBeVisible();
+    await input.press('ArrowDown');
+    await input.press('Enter');
+    await expect(input).toHaveValue(env.containerId);
+    await expect(input).toHaveAttribute('aria-expanded', 'false');
+    await submit(page).click();
+    await expect(result(page)).toContainText('Architecture');
+
+    // An ID that is not listed is still allowed.
+    await input.fill('zz-not-listed');
+    await expect(page.getByRole('status').filter({ hasText: 'The ID is used as typed' })).toBeVisible();
+  });
+
+  test('explains object ID and display name, and checks the format of a new ID', async ({ page }) => {
+    await openAction(page, 'Manage images', 'Image clone');
+    await expect(field(page, 'Object ID')).toHaveAccessibleDescription(/unique key of the DaaS object/i);
+    await expect(field(page, 'New object ID')).toHaveAccessibleDescription(/daas\.<object ID> in lower case/);
+    await expect(field(page, 'Display name')).toHaveAccessibleDescription(/does not have to be unique/);
+
+    await enterObjectId(page, 'contx11');
+    await field(page, 'Display name').fill('any name, with spaces');
+    const newId = field(page, 'New object ID');
+    for (const bad of ['has space', 'ends-', 'a..b', 'ümlaut']) {
+      await newId.fill(bad);
+      await newId.blur();
+      await expect(page.getByText(/Use letters and digits/)).toBeVisible();
+      await expect(submit(page)).toBeDisabled();
+    }
+    await newId.fill('e2e-valid.id_1');
+    await expect(page.getByText(/Use letters and digits/)).toHaveCount(0);
+    await expect(submit(page)).toBeEnabled();
+  });
+
   test('the container logs of an unknown object report that it does not exist', async ({ page }) => {
     await openAction(page, 'Manage containers', 'Container logs');
-    await field(page, 'ID').fill('zz-e2e-no-such-object');
+    await enterObjectId(page, 'zz-e2e-no-such-object');
     await submit(page).click();
     await expect(failAlert(page)).toContainText('not found');
   });
@@ -170,9 +249,9 @@ test.describe('docker object lifecycle', () => {
 
   test('clones the container object', async ({ page }) => {
     await openAction(page, 'Manage images', 'Image clone');
-    await field(page, 'ID').fill(env.containerId);
-    await field(page, 'New ID').fill(cloneId);
-    await field(page, 'Name').fill('e2e docker test');
+    await enterObjectId(page, env.containerId);
+    await field(page, 'New object ID').fill(cloneId);
+    await field(page, 'Display name').fill('e2e docker test');
     await submit(page).click();
     await expect(successAlert(page)).toBeVisible({ timeout: 120_000 });
 
@@ -183,7 +262,7 @@ test.describe('docker object lifecycle', () => {
 
   test('builds the image and shows the build log', async ({ page }) => {
     await openAction(page, 'Manage images', 'Image build');
-    await field(page, 'ID').fill(cloneId);
+    await enterObjectId(page, cloneId);
     await submit(page).click();
     await expect(successAlert(page)).toBeVisible({ timeout: 300_000 });
     await expect(result(page)).toContainText(`Successfully tagged daas.${cloneId}:latest`);
@@ -191,7 +270,7 @@ test.describe('docker object lifecycle', () => {
 
   test('starts the container without a viewer and shows its instance id', async ({ page }) => {
     await openAction(page, 'Manage containers', 'Container start');
-    await field(page, 'ID').fill(cloneId);
+    await enterObjectId(page, cloneId);
     await submit(page).click();
     await expect(successAlert(page)).toBeVisible({ timeout: env.startTimeoutMs });
     const instance = result(page).locator('.result-instance code');
@@ -202,7 +281,7 @@ test.describe('docker object lifecycle', () => {
 
   test('shows the container logs as readable text', async ({ page }) => {
     await openAction(page, 'Manage containers', 'Container logs');
-    await field(page, 'ID').fill(cloneId);
+    await enterObjectId(page, cloneId);
     await submit(page).click();
     await expect(successAlert(page)).toBeVisible();
     const text = (await result(page).innerText()).trim();
@@ -223,31 +302,31 @@ test.describe('docker object lifecycle', () => {
 
     // Afterwards there is no container to read logs from.
     await openAction(page, 'Manage containers', 'Container logs');
-    await field(page, 'ID').fill(cloneId);
+    await enterObjectId(page, cloneId);
     await submit(page).click();
     await expect(failAlert(page)).toContainText('No container with specified name');
   });
 
   test('creates an object from a root image', async ({ page }) => {
     await openAction(page, 'Manage images', 'Root Image create');
-    await field(page, 'ID').fill(rootId);
-    await field(page, 'Name').fill('e2e docker root test');
+    await enterObjectId(page, rootId);
+    await field(page, 'Display name').fill('e2e docker root test');
     await field(page, 'Cores').fill('2');
-    await field(page, 'Memory Size').fill(String(4 * 1024 ** 2)); // KiB
-    await field(page, 'Hard Disk Size').fill(String(8 * 1024 ** 2));
-    await field(page, 'Resolution').fill('1280x800');
+    await field(page, 'Memory (GiB)').fill('4');
+    await field(page, 'Hard disk (GiB)').fill('8');
+    await field(page, 'Resolution').selectOption('1280x800');
     await submit(page).click();
     await expect(successAlert(page)).toBeVisible({ timeout: 300_000 });
 
     await openAction(page, 'Manage images', 'Image inspect');
-    await field(page, 'ID').fill(rootId);
+    await enterObjectId(page, rootId);
     await submit(page).click();
     await expect(result(page)).toContainText('Architecture');
   });
 
   test('deletes the image, and a second delete reports that it is gone', async ({ page }) => {
     await openAction(page, 'Manage images', 'Image delete');
-    await field(page, 'ID').fill(cloneId);
+    await enterObjectId(page, cloneId);
     await submit(page).click();
     await expect(successAlert(page)).toBeVisible({ timeout: 120_000 });
 
