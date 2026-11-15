@@ -27,6 +27,7 @@ export const env = {
   allowStartStop: flag('E2E_ALLOW_START_STOP', false),
   objectId: value('E2E_OBJECT_ID'),
   startTimeoutMs: Number(value('E2E_START_TIMEOUT', '600')) * 1000,
+  containerId: value('E2E_CONTAINER_ID'),
 };
 
 export const hasAccount = (role: Role) => Boolean(env.accounts[role].username && env.accounts[role].password);
