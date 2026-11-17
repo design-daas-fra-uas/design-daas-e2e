@@ -28,6 +28,10 @@ export const env = {
   objectId: value('E2E_OBJECT_ID'),
   startTimeoutMs: Number(value('E2E_START_TIMEOUT', '600')) * 1000,
   containerId: value('E2E_CONTAINER_ID'),
+  // Auth service as the frontend calls it (nginx proxies /auth to the Java backend).
+  authApiUrl: value('E2E_AUTH_API_URL', `${value('E2E_BASE_URL', 'https://localhost:8443')}/auth`).replace(/\/+$/, ''),
+  // How long design-daas may reuse a permission answer (PERMISSION_CACHE_SECONDS = 30) plus a margin.
+  permissionCacheMs: Number(value('E2E_PERMISSION_CACHE', '45')) * 1000,
 };
 
 export const hasAccount = (role: Role) => Boolean(env.accounts[role].username && env.accounts[role].password);

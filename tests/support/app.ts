@@ -11,11 +11,15 @@ export const ROUTES = {
   user: {
     monitoring: '/dashboard/monitoring',
     connectionRun: '/dashboard/connectionRun',
+    quota: '/dashboard/quota',
   },
   admin: {
     root: '/dashboard/admin',
     settings: '/dashboard/admin/settings',
     monitoring: '/dashboard/admin/monitoring',
+    status: '/dashboard/admin/status',
+    permissions: '/dashboard/admin/settings/permissions',
+    desktopDetail: (id: number | string) => `/dashboard/admin/settings/desktops/${encodeURIComponent(id)}`,
     limitation: '/dashboard/admin/limitation',
     tasks: '/dashboard/admin/tasks',
     users: '/dashboard/admin/settings/users',
@@ -57,5 +61,12 @@ export async function expectNoRenderError(page: Page) {
   await expect(page.getByText(en.renderError)).toHaveCount(0);
 }
 
-// The page heading of every view uses the "page-title" class.
-export const pageTitle = (page: Page) => page.locator('h2.page-title');
+// The page heading of every view (an h1) uses the "page-title" class.
+export const pageTitle = (page: Page) => page.locator('.page-title');
+
+// Accessible name of a button or link with a visually hidden ": <name>" after its label,
+// e.g. "Details: desktop 1" (browsers may put a space before the colon).
+export const labelFor = (label: string, name: string) =>
+  new RegExp(`^${escapeRegExp(label)}\\s*:\\s*${escapeRegExp(name)}$`);
+
+export const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

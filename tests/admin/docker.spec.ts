@@ -87,6 +87,32 @@ test.describe('docker running containers', () => {
     await expect(table.locator('tbody tr').first()).toContainText(/\d+(\.\d+)? %/);
     await expect(table.locator('tbody tr').first()).toContainText(/\d+(\.\d+)? \w?i?B \/ /);
   });
+
+  test('lists every container the system status page reports as running', async ({ page }) => {
+    await page.goto(ROUTES.admin.status);
+    const statusRows = page.locator('tbody tr').filter({ has: page.getByRole('cell', { name: 'container', exact: true }) });
+    await expect(statusRows.first()).toBeVisible({ timeout: 30_000 });
+    const running = await statusRows.filter({ has: page.getByRole('cell', { name: 'up', exact: true }) }).locator('td:nth-child(1)').allInnerTexts();
+    expect(running.length).toBeGreaterThan(0);
+
+    await openTab(page, 'Running containers');
+    const panel = page.getByRole('tabpanel', { name: 'Running containers' });
+    await expect(panel.locator('tbody tr').first()).toBeVisible({ timeout: 30_000 });
+    for (const name of running) {
+      await expect(panel.locator('tbody tr').filter({ hasText: name }).first()).toBeVisible();
+    }
+    // The tab title counts the rows.
+    const rows = await panel.locator('tbody tr').count();
+    await expect(panel.getByText(`${rows} running`, { exact: true })).toBeVisible();
+  });
+
+  test('is linked from the admin dashboard', async ({ page }) => {
+    await page.goto(ROUTES.admin.root);
+    await page.locator('#dashboardAdmin').getByRole('link', { name: 'Docker', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`${ROUTES.admin.docker}$`));
+    await expect(tab(page, 'Images')).toBeVisible();
+    await expectNoRenderError(page);
+  });
 });
 
 test.describe('docker image actions', () => {
