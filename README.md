@@ -10,53 +10,209 @@ and TypeScript. They drive the real frontend in Chromium against the running sta
 | DaaS backend (Python) | `design-daas` | `https://<host>` → `127.0.0.1:5000` |
 
 The tests only use the browser, so they test whatever is deployed. They do not start the stack.
+The repositories of the three parts are [design-daas](https://github.com/design-daas-fra-uas/design-daas)
+(also the installer of the complete system),
+[design-daas-application-frontend](https://github.com/design-daas-fra-uas/design-daas-application-frontend)
+and [design-daas-backend-java](https://github.com/design-daas-fra-uas/design-daas-backend-java).
 
-## Setup
+## Before you start: the system must already be deployed
 
-Requirements: Node.js 18 or newer, plus a running stack (`make install` in `design-daas/installer`).
+These tests **install and start nothing**. They test a DESIGN DaaS system that is **already
+installed and running**, and they only work against it. If it is not running yet, install it
+first with the installer in the `design-daas` repository: clone `design-daas`,
+`design-daas-application-frontend` and `design-daas-backend-java` next to each other, set the
+values in `design-daas/installer/daas.env` and run the installer, as described step by step in
+the **[design-daas README → Installation: from a blank machine to a running system](https://github.com/design-daas-fra-uas/design-daas)**.
+
+Check that it runs: `make -C <folder>/design-daas/installer status` on the DaaS host shows every
+part as `active` / `running`, and you can log in at `https://<host>:8443/` in a browser.
+
+From its `daas.env` the tests need:
+
+- the frontend address, `FRONTEND_PUBLIC_URL` (by default `https://<HOST_NAME>.<HOST_DOMAIN>:8443`),
+- the admin account, `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+
+## Install
+
+The tests run on any computer that reaches the DaaS system: the DaaS host itself or another
+one in the same network. The steps are for Debian 12; commands marked *as root* need `su -`
+(with the dash) or `sudo`.
+
+### 1. Node.js 26 (as root)
+
+Debian's own `nodejs` package is too old, so install the official build from nodejs.org (skip
+this if `node -v` already prints v26, e.g. on the DaaS host):
 
 ```bash
-npm install
-npm run install:browsers     # downloads Playwright's Chromium into node_modules (once)
-cp .env.example .env         # then edit .env
+apt-get update
+apt-get install -y git curl ca-certificates xz-utils libatomic1
+cd /tmp
+curl -fsSLO https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.xz
+mkdir -p /usr/local/lib/nodejs
+tar -xJf node-v26.13.0-linux-x64.tar.xz -C /usr/local/lib/nodejs
+for b in node npm npx; do ln -sf /usr/local/lib/nodejs/node-v26.13.0-linux-x64/bin/$b /usr/local/bin/$b; done
+node -v           # must print v26.13.0
 ```
 
-`.env` settings (see `.env.example`):
+### 2. The tests, their packages and Chromium (as your normal user)
 
-- `E2E_BASE_URL`: frontend URL. Use the host name the frontend was built for
-  (`FRONTEND_PUBLIC_URL` in `installer/daas.env`), e.g. `https://front0.cluster.local:8443`.
-  The auth service only allows that origin (CORS). From `localhost`, every login fails.
-- `E2E_IGNORE_HTTPS_ERRORS`: `true` for the self-signed certificate of the local nginx.
-- `E2E_USER_USERNAME` / `E2E_USER_PASSWORD`: an existing account with the role *user*.
-- `E2E_ADMIN_USERNAME` / `E2E_ADMIN_PASSWORD`: an admin, e.g. the bootstrap admin
-  (`ADMIN_EMAIL` / `ADMIN_PASSWORD` from `daas.env`).
+```bash
+cd ~
+git clone https://github.com/design-daas-fra-uas/design-daas-e2e.git
+cd design-daas-e2e
+npm ci
+npm run install:browsers
+```
+
+`install:browsers` downloads Playwright's Chromium into `node_modules` (once).
+
+### 3. System libraries for Chromium (as root, once)
+
+A fresh Debian lacks some libraries Chromium needs. In the repository folder:
+
+```bash
+cd /home/<your-user>/design-daas-e2e
+npx playwright install-deps chromium
+```
+
+## Configure
+
+### 4. Make the host names resolve (as root)
+
+The tests must open the frontend under exactly the name it was built for (the auth service
+accepts logins only from that origin), and the frontend then calls the DaaS backend under its
+own name. On the DaaS host, print the hosts file line that covers all of them:
+
+```bash
+make -C <folder>/design-daas/installer client-hosts
+```
+
+e.g. `192.168.0.158  pve1.daas-design.de`. Unless your DNS already resolves these names, add
+that line on the test computer:
+
+```bash
+echo "<the line from make client-hosts>" >> /etc/hosts
+```
+
+Check it: `curl -k <FRONTEND_PUBLIC_URL>/` (e.g. `curl -k https://pve1.daas-design.de:8443/`)
+must return HTML. On the DaaS host itself the names usually resolve already; the same `curl`
+tells you.
+
+### 5. Create the test accounts
+
+The admin tests use the admin from `daas.env`. The user tests need **a separate account with
+the role *user***, which you create once in the browser:
+
+1. Open the frontend (`https://<host>:8443/`), *Admin* tab, log in with `ADMIN_EMAIL` /
+   `ADMIN_PASSWORD`, then go to the *Administration* page (`https://<host>:8443/dashboard/admin`).
+2. *Create/Update a group*: create a user group, e.g. *Group description* `e2e`.
+3. *Create an account*, tab *User*: a name, an e-mail (e.g. `e2e-user@design.local`), a password
+   (8–72 characters with an upper-case letter, a lower-case letter and a digit) and the group
+   you just created (e.g. `e2e`).
+
+Give this account **no** permission rules of its own: the user tests add and remove the rules
+they need themselves (see [User functions and their permissions](#user-functions-and-their-permissions)).
+
+### 6. Write the settings file
+
+In the repository folder, as your normal user:
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Set at least:
+
+| Key | Value |
+| --- | --- |
+| `E2E_BASE_URL` | the frontend address, e.g. `https://pve1.daas-design.de:8443` (not `localhost`, not the IP) |
+| `E2E_IGNORE_HTTPS_ERRORS` | `true` (the installer's own certificate is not trusted by Playwright's Chromium) |
+| `E2E_USER_USERNAME` / `E2E_USER_PASSWORD` | e-mail and password of the account from step 5 |
+| `E2E_ADMIN_USERNAME` / `E2E_ADMIN_PASSWORD` | `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `daas.env` |
+
+The other keys are optional and explained in `.env.example`:
+
 - `E2E_ALLOW_START_STOP`, `E2E_OBJECT_ID`, `E2E_START_TIMEOUT`: opt-in test that really
   starts and stops an object (VM/container) of the test user.
-
-Chromium is kept inside `node_modules` (`PLAYWRIGHT_BROWSERS_PATH=0`, also set in
-`playwright.config.ts`), so the tests work for any system user. Run them as the user that
-owns this folder, though: a run as root leaves root-owned `test-results/` and
-`playwright-report/` behind, which the next normal run cannot overwrite.
+- `E2E_CONTAINER_ID`: a DaaS container object (e.g. `contx11`) for the admin Docker page.
+- `E2E_AUTH_API_URL`, `E2E_PERMISSION_CACHE`: only needed if the auth service is not behind the
+  installer's nginx or the permission cache was changed.
 
 Tests that need a login are **skipped** (not failed) while their account is empty.
 `.env` is git-ignored, so passwords never end up in the repository.
 
-## Running
+## Run the tests
+
+In the repository folder, as your normal user. Start with the public tests: they need no
+accounts and show that the frontend is reachable. Then run everything:
 
 ```bash
-npm test                  # everything
-npm run test:public       # login page, route guards, 404 (no accounts needed)
-npm run test:user         # user dashboard and monitoring
-npm run test:admin        # admin dashboard, settings pages, monitoring
-npm run test:session      # login + logout for user and admin
-npm run test:headed       # watch the browser
-npm run test:ui           # Playwright UI mode
-npm run report            # open the HTML report of the last run
-npm run typecheck
+npm run test:public
+npm test
 ```
 
-On failure, Playwright keeps a screenshot and a trace under `test-results/`.
-Open a trace with `npx playwright show-trace <file>`.
+Other ways to run them:
+
+```bash
+npm run test:user         # user dashboard, monitoring, My resources
+npm run test:admin        # admin dashboard, settings pages, monitoring
+npm run test:session      # login + logout for user and admin
+npm run test:headed       # same as npm test, but you watch the browser (needs a desktop)
+npm run test:ui           # Playwright UI mode: pick tests, run them, step through (needs a desktop)
+npm run typecheck         # TypeScript check of the tests
+```
+
+All tests run one after another (one worker), since they share one system and its VMs.
+Run them as the user that owns this folder: a run as root leaves root-owned `test-results/`
+and `playwright-report/` behind, which the next normal run cannot overwrite. (Chromium is kept
+inside `node_modules`, `PLAYWRIGHT_BROWSERS_PATH=0`, so any user can run them.)
+
+## See the results
+
+**In the terminal.** Every test prints one line while it runs, and a summary at the end, e.g.
+for `npm run test:public`:
+
+```
+Running 14 tests using 1 worker
+
+  ✓   1 [public] › tests/public/guards.spec.ts:16:5 › without a login › /dashboard redirects to the login page (326ms)
+  ...
+  ✓  14 [public] › tests/public/login.spec.ts:60:3 › login page › the language menu switches the UI to German and back (404ms)
+
+  14 passed (4.8s)
+```
+
+`✓` passed, `✘` failed, `-` skipped (an opt-in test or a missing account). For `npm test` all
+tests must be passed or skipped; the command exits with a non-zero code if one failed.
+
+**As an HTML report.** Every run writes a report to `playwright-report/`, with every test, its
+steps and, for failures, the screenshot and the error. Open the report of the last run:
+
+```bash
+npm run report
+```
+
+This serves it on <http://localhost:9323> and opens it in the browser. On a computer without a
+desktop (e.g. the DaaS host over SSH), serve it to the network instead and open
+`http://<test-computer-ip>:9323` from another computer:
+
+```bash
+npx playwright show-report --host 0.0.0.0
+```
+
+Stop it with `Ctrl+C`.
+
+**For a failed test.** Playwright keeps a screenshot (`test-failed-1.png`) and a trace
+(`trace.zip`) in a folder per test under `test-results/`. The trace replays the test step by
+step, with the page, the network requests and the console at each step:
+
+```bash
+npx playwright show-trace test-results/<folder of the test>/trace.zip
+```
+
+To watch a failing test live, run only its file in the browser, e.g.
+`npm run test:headed -- tests/admin/docker.spec.ts`.
 
 ## What is covered
 
