@@ -34,6 +34,8 @@ test.describe('desktops page', () => {
     await page.locator('#dashboardAdmin').getByRole('link', { name: t.title, exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`${ROUTES.admin.desktops}$`));
     await expect(pageTitle(page)).toHaveText(t.title);
+    // The badge shows 0 while loading: wait for the list (or its empty state) first.
+    await expect(page.locator('.entity-list li').or(page.locator('.empty-state')).first()).toBeVisible();
     const heading = page.getByRole('heading', { name: new RegExp(`^${t.title} \\d+$`) });
     await expect(heading).toBeVisible();
     const count = Number((await heading.innerText()).match(/\d+$/)![0]);

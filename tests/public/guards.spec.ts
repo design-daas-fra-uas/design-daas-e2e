@@ -29,7 +29,9 @@ test.describe('without a login', () => {
 
   test('an unknown page shows the 404 page', async ({ page }) => {
     await page.goto('/this-page-does-not-exist');
-    await expect(page.getByRole('heading', { name: 'Error - 404' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: en.notFound })).toBeVisible();
+    await expect(page.getByRole('heading', { name: en.notFound, level: 1 })).toBeVisible();
+    await expect(page.getByText('This page does not exist or is no longer available.')).toBeVisible();
+    // The code line names the missing path.
+    await expect(page.getByText('404 · /this-page-does-not-exist')).toBeVisible();
   });
 });

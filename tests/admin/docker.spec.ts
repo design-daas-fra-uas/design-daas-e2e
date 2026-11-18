@@ -79,7 +79,8 @@ test.describe('docker running containers', () => {
     await expect(table.getByRole('columnheader', { name: 'CPU' })).toHaveCount(0);
 
     const started = Date.now();
-    await page.getByRole('checkbox', { name: 'Show CPU and memory usage' }).check();
+    // The list reloads and redraws the switch, so click once instead of check().
+    await page.getByRole('checkbox', { name: 'Show CPU and memory usage' }).click();
     await expect(table.getByRole('columnheader', { name: 'CPU' })).toBeVisible({ timeout: 30_000 });
     await expect(table.getByRole('columnheader', { name: 'Memory' })).toBeVisible();
     // Docker is asked for all containers at once: about one stats call (~2 s), not one per container.

@@ -25,15 +25,20 @@ test.describe('login page', () => {
     await expect(page.getByRole('link', { name: en.registrationLink })).toHaveCount(0);
   });
 
-  test('submit stays disabled until username and password are filled', async ({ page }) => {
-    const submit = page.getByRole('button', { name: en.submit });
-    await expect(submit).toBeDisabled();
-    await page.locator('#user-username').fill('someone');
+  test('submitting an empty form shows what is missing and sends nothing', async ({ page }) => {
+    // Submit stays enabled while the form is invalid: submitting shows the field errors.
+    const tokenRequests: string[] = [];
+    page.on('request', (request) => request.url().includes('/oauth2/') && tokenRequests.push(request.url()));
+    await page.getByRole('button', { name: en.submit }).click();
+    await expect(page.getByText('Username is required.')).toBeVisible();
+    await expect(page.getByText('Password is required.')).toBeVisible();
+    // Spaces only are not a username.
+    await page.locator('#user-username').fill('   ');
     await page.locator('#user-password').fill('x');
-    await expect(submit).toBeEnabled();
-    await page.locator('#user-password').fill('');
-    await page.locator('#user-password').blur();
-    await expect(submit).toBeDisabled();
+    await page.getByRole('button', { name: en.submit }).click();
+    await expect(page.getByText('Username is required.')).toBeVisible();
+    await expect(page.getByText('Password is required.')).toHaveCount(0);
+    expect(tokenRequests).toEqual([]);
   });
 
   for (const role of ['user', 'admin'] as const) {
@@ -54,7 +59,8 @@ test.describe('login page', () => {
 
   test('the language menu switches the UI to German and back', async ({ page }) => {
     await page.getByRole('button', { name: en.language }).click();
-    await page.getByRole('button', { name: 'DE', exact: true }).click();
+    // The menu items name each language in itself ("Deutsch", "English").
+    await page.locator('.dropdown-menu [lang="de"]').click();
     await expect(page.getByRole('heading', { name: de.login, exact: true })).toBeVisible();
     await expect(page.getByRole('tab', { name: de.userTab, exact: true })).toBeVisible();
 
@@ -63,7 +69,7 @@ test.describe('login page', () => {
     await expect(page.getByRole('heading', { name: de.login, exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: de.language }).click();
-    await page.getByRole('button', { name: 'EN', exact: true }).click();
+    await page.locator('.dropdown-menu [lang="en"]').click();
     await expect(page.getByRole('heading', { name: en.login, exact: true })).toBeVisible();
   });
 });

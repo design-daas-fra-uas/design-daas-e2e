@@ -28,6 +28,8 @@ test.describe('desktop groups page', () => {
     await page.locator('#dashboardAdmin').getByRole('link', { name: t.groupsTitle, exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`${ROUTES.admin.desktopGroups}$`));
     await expect(pageTitle(page)).toHaveText(t.groupsTitle);
+    // The badge shows 0 while loading: wait for the list (or its empty state) first.
+    await expect(page.locator('.entity-list li').or(page.locator('.empty-state')).first()).toBeVisible();
     const heading = page.getByRole('heading', { name: new RegExp(`^${t.groupsTitle} \\d+$`) });
     const count = Number((await heading.innerText()).match(/\d+$/)![0]);
     await expect(page.locator('.entity-list li')).toHaveCount(count);

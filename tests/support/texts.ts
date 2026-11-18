@@ -50,6 +50,7 @@ export const en = {
   no: 'No',
   required: 'This field is required.',
   noPermission: 'No permission',
+  permissionDeniedHint: 'Please ask an administrator if you need this.',
 
   permissions: {
     title: 'Permissions',

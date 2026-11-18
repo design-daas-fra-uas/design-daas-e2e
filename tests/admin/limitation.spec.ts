@@ -1,8 +1,9 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 
+import { UserGrant, closeSettled, expectFeatureAllowed, loginUser } from '../support/access';
 import { BackendApi, type Account, type Limit } from '../support/api';
 import { ROUTES, expectNoRenderError, pageTitle } from '../support/app';
-import { env, hasAccount, missingAccountMessage, storageStatePath } from '../support/env';
+import { env, hasAccount, missingAccountMessage } from '../support/env';
 import { en } from '../support/texts';
 
 test.skip(!hasAccount('admin'), missingAccountMessage('admin'));
@@ -16,13 +17,15 @@ const dialog = (page: Page, name: string) => page.getByRole('dialog', { name });
 const submit = (page: Page) => page.getByRole('button', { name: en.submit, exact: true });
 const card = (page: Page, title: string) => page.locator('.panel').filter({ has: page.getByRole('heading', { name: title }) });
 
-// Opens "My resources" as the e2e user and returns the text of every card.
-async function userQuota(browser: Browser) {
-  const context = await browser.newContext({
-    baseURL: env.baseUrl,
-    ignoreHTTPSErrors: env.ignoreHttpsErrors,
-    storageState: storageStatePath('user'),
-  });
+const MY_RESOURCES = {
+  name: 'my resources',
+  endpoints: ['get_quota'],
+  path: ROUTES.user.quota,
+  allowed: (page: Page) => page.locator('.stat-card'),
+};
+
+// Opens "My resources" in the e2e user's session and returns the text of every card.
+async function userQuota(context: BrowserContext) {
   const page = await context.newPage();
   await page.goto(ROUTES.user.quota);
   await expect(page.locator('.stat-card')).toHaveCount(6, { timeout: 30_000 });
@@ -30,7 +33,7 @@ async function userQuota(browser: Browser) {
     source: await page.locator('.page-intro').innerText(),
     cards: await page.locator('.stat-card').allInnerTexts(),
   };
-  await context.close();
+  await closeSettled(page);
   return result;
 }
 
@@ -58,7 +61,9 @@ test.describe('limitation page', () => {
     await page.goto(ROUTES.admin.limitation);
     await page.getByRole('button', { name: t.create }).click();
     const modal = dialog(page, t.create);
-    // A new limit starts with the default limit's values.
+    // Whole GiB values, so the browser's own step check cannot block the submit (see below).
+    await modal.getByLabel('Memory', { exact: true }).fill('16');
+    await modal.getByLabel('Disk', { exact: true }).fill('400');
     await submit(page).click();
     await expect(modal.getByText(t.errorAccount)).toBeVisible();
 
@@ -78,17 +83,36 @@ test.describe('limitation page', () => {
     await modal.getByRole('button', { name: 'Close' }).click();
     await expect(modal).toBeHidden();
   });
+
+  // The inputs only allow steps of 0.5 GiB (step="0.5"), but the default limit is shown
+  // rounded to 0.1 GiB (e.g. 17.6). The browser then refuses to submit the form, silently.
+  test('a new limit prefilled with the default values can be submitted', async ({ page }) => {
+    await page.goto(ROUTES.admin.limitation);
+    await page.getByRole('button', { name: t.create }).click();
+    const modal = dialog(page, t.create);
+    for (const label of t.fields) {
+      const input = modal.getByLabel(label, { exact: true });
+      if (await input.isDisabled()) continue;
+      const valid = await input.evaluate((element: HTMLInputElement) => element.checkValidity());
+      expect(valid, `${label} = ${await input.inputValue()} is rejected by the browser (step)`).toBe(true);
+    }
+  });
 });
 
 // Changes the e2e user's limit through the page and checks that the user sees it
-// on "My resources", then removes it so the default limit applies.
+// on "My resources", then removes it so the default limit applies. The user gets the
+// get_quota permission for this and loses it again at the end.
 test.describe('limit of the e2e user', () => {
   test.skip(!hasAccount('user'), missingAccountMessage('user'));
   test.describe.configure({ mode: 'serial' });
 
+  test.describe.configure({ timeout: env.permissionCacheMs + 60_000 });
+
   let user: Account;
   let original: Limit | undefined;
   let fallback: Limit;
+  let grant: UserGrant;
+  let userContext: BrowserContext;
 
   test.beforeAll(async ({ browser }) => {
     const api = await BackendApi.open(browser);
@@ -97,9 +121,17 @@ test.describe('limit of the e2e user', () => {
     original = overview.limits.find((limit) => limit.id_owner === user.id);
     fallback = overview.fallback;
     await api.close();
+
+    grant = new UserGrant(browser, MY_RESOURCES.endpoints);
+    const conflicts = await grant.conflicts();
+    test.skip(conflicts.length > 0, `The e2e user already has own rules for ${conflicts.join(', ')}`);
+    await grant.grant();
+    userContext = await loginUser(browser);
   });
 
   test.afterAll(async ({ browser }) => {
+    await grant?.revoke();
+    await userContext?.close();
     const api = await BackendApi.open(browser);
     if (original) {
       await api.putLimit(original);
@@ -111,7 +143,7 @@ test.describe('limit of the e2e user', () => {
 
   const row = (page: Page) => page.getByRole('row').filter({ hasText: env.accounts.user.username });
 
-  test('sets an own limit, shown in the table and on the user\'s "My resources"', async ({ page, browser }) => {
+  test('sets an own limit, shown in the table and on the user\'s "My resources"', async ({ page }) => {
     await page.goto(ROUTES.admin.limitation);
     if (original) {
       await page.getByRole('button', { name: `${t.edit} ${user.name}` }).click();
@@ -151,7 +183,9 @@ test.describe('limit of the e2e user', () => {
       '',
     ]);
 
-    const quota = await userQuota(browser);
+    // The new rule may take up to 30 s to reach design-daas.
+    await expectFeatureAllowed(userContext, MY_RESOURCES, true);
+    const quota = await userQuota(userContext);
     expect(quota.source).toBe(en.quota.sourceUser);
     expect(quota.cards[0]).toMatch(/\/ 1\b/);
     expect(quota.cards[1]).toMatch(/\/ 2\b/);
@@ -172,7 +206,7 @@ test.describe('limit of the e2e user', () => {
     await expect(modal.locator('#limit-dsk_max-unlimited')).toBeChecked();
   });
 
-  test('removing the limit gives the user the default limit', async ({ page, browser }) => {
+  test('removing the limit gives the user the default limit', async ({ page }) => {
     await page.goto(ROUTES.admin.limitation);
     await page.getByRole('button', { name: `${t.remove} ${user.name}` }).click();
     const confirm = dialog(page, t.remove);
@@ -181,7 +215,7 @@ test.describe('limit of the e2e user', () => {
     await expect(confirm).toBeHidden();
     await expect(row(page)).toHaveCount(0);
 
-    const quota = await userQuota(browser);
+    const quota = await userQuota(userContext);
     expect(quota.source).toBe(en.quota.sourceFallback);
     const vms = fallback.vm_max < 0 ? 'No limit' : String(fallback.vm_max);
     expect(quota.cards[0]).toContain(`/ ${vms}`);

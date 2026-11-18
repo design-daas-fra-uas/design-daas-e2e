@@ -9,7 +9,7 @@ process.env.PLAYWRIGHT_BROWSERS_PATH ??= '0';
 // Projects:
 //   setup   - logs in the test user and admin once and saves their sessions
 //   public  - pages without login (login form, registration, 404, route guards)
-//   user    - user dashboard and monitoring, with the saved user session
+//   user    - user functions, each tested without and with its permission (fresh logins)
 //   admin   - admin dashboard, settings and monitoring, with the saved admin session
 //   session - login/logout flows with fresh logins; runs last because logging
 //             out ends sessions on the server
@@ -35,10 +35,10 @@ export default defineConfig({
     { name: 'setup', testMatch: /auth\.setup\.ts/ },
     { name: 'public', testDir: './tests/public' },
     {
+      // No saved session: user tests log in fresh (see tests/support/access.ts).
       name: 'user',
       testDir: './tests/user',
       dependencies: ['setup'],
-      use: { storageState: storageStatePath('user') },
     },
     {
       name: 'admin',

@@ -69,7 +69,7 @@ Open a trace with `npx playwright show-trace <file>`.
 | `user` | `tests/user/monitoring.spec.ts` | Monitoring from the toolbar, tabs and data loading. |
 | `admin` | `tests/admin/admin.spec.ts` | Link from the dashboard to the admin dashboard, admin/user lists, settings overview, every admin settings page loads, every quick link works, admin monitoring tabs. |
 | `user` | `tests/user/quota.spec.ts` | *My resources*: toolbar link, six resources with use / limit / bar, refresh. Admin pages (status, limitation, permissions, desktops, desktop groups, docker) stay closed to a user. |
-| `admin` | `tests/admin/permissions.spec.ts` | Tabs and counts, synced endpoints incl. typed permissions (`baseimage_create_vm`), search, rule form validation, endpoint group create / duplicate / edit / delete. **Effect:** an own rule for the e2e user on `get_quota` flips its *My resources* page, deleting it restores it (waits for the 30 s permission cache). |
+| `admin` | `tests/admin/permissions.spec.ts` | Tabs and counts, synced endpoints incl. typed permissions (`baseimage_create_vm`), search, rule form validation, endpoint group create / duplicate / edit / delete. **Effect:** the e2e user is denied *My resources*; an allow rule created on this page opens it, deleting the rule closes it again (each step waits for the 30 s permission cache). |
 | `admin` | `tests/admin/limitation.spec.ts` | Default limit, system maximum, table. Form validation and "No limit". **Effect:** sets an own limit for the e2e user, checks it in the table and on the user's *My resources*, removes it (default limit applies). The e2e user's original limit is restored afterwards. |
 | `admin` | `tests/admin/desktops.spec.ts` | List and count, form validation, create with a new desktop group, taken group name is refused, details page, unknown id, delete (group is kept). |
 | `admin` | `tests/admin/desktop-groups.spec.ts` | List and count, create, duplicate name refused, add a user group (twice is refused), delete after confirm. |
@@ -91,6 +91,32 @@ tests/support/texts.ts   English UI texts used as locators (from the frontend's 
 ```
 
 When the frontend changes its texts or routes, update `texts.ts` / `app.ts`.
+
+### User functions and their permissions
+
+design-daas checks endpoint rules (`enable_auth_endpoint = true`), and without a matching rule
+a user is denied everything. So every user function is tested in four steps
+(`describeWithPermission` in `tests/support/access.ts`):
+
+1. without a rule the page shows "No permission"
+2. the admin allows the endpoints it needs to the e2e user (account → endpoint rules)
+3. the function's own tests run
+4. the rules are deleted, and the page is denied again
+
+| Function | Endpoints |
+| --- | --- |
+| Dashboard | `dashboard_info` |
+| Monitoring | `get_monitor_info_{tasks,files,apps,websockets,host,objects,utilization,limits}` |
+| My resources | `get_quota` |
+| Start/stop (opt-in) | `dashboard_info`, `baseimage_start`, `baseimage_stop`, `baseimage_object_status`, `viewer_connect`, `vmstatus` |
+
+The e2e user must therefore have **no** rules of its own for these endpoints (the tests skip
+themselves otherwise) and no group rule that allows them. A changed rule takes up to 30 s to
+reach design-daas, so these tests wait for it (`E2E_PERMISSION_CACHE`).
+
+User tests log in fresh (one login per function) instead of using the saved session in
+`.auth/user.json`: design-daas answers a denied endpoint with 401, the frontend then refreshes
+the session, and the refresh token in the saved file is spent for every later test.
 
 ### Test data
 

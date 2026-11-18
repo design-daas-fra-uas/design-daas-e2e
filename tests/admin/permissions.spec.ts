@@ -1,8 +1,9 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 
+import { expectFeatureAllowed, loginUser } from '../support/access';
 import { BackendApi, uniqueName, type Account } from '../support/api';
 import { ROUTES, expectNoRenderError, pageTitle } from '../support/app';
-import { env, hasAccount, missingAccountMessage, storageStatePath } from '../support/env';
+import { env, hasAccount, missingAccountMessage } from '../support/env';
 import { en } from '../support/texts';
 
 test.skip(!hasAccount('admin'), missingAccountMessage('admin'));
@@ -184,28 +185,14 @@ test.describe('a rule takes effect for the user', () => {
   let user: Account;
   let createdRule: { kind: string; id: number } | undefined;
 
-  // Is "My resources" allowed for the user right now? Waits until the page settles.
-  async function quotaAllowed(browser: Browser) {
-    const context = await browser.newContext({
-      baseURL: env.baseUrl,
-      ignoreHTTPSErrors: env.ignoreHttpsErrors,
-      storageState: storageStatePath('user'),
-    });
-    const page = await context.newPage();
-    await page.goto(ROUTES.user.quota);
-    const allowed = page.getByText(en.quota.cards[0]);
-    const denied = page.getByText(en.quota.denied);
-    await expect(allowed.or(denied).first()).toBeVisible({ timeout: 30_000 });
-    const result = await allowed.isVisible();
-    await context.close();
-    return result;
-  }
-
-  // design-daas reuses an answer of the auth service for up to 30 s.
-  const expectQuotaAllowed = (browser: Browser, allowed: boolean) =>
-    expect
-      .poll(() => quotaAllowed(browser), { timeout: env.permissionCacheMs, intervals: [5_000] })
-      .toBe(allowed);
+  const MY_RESOURCES = {
+    name: 'my resources',
+    endpoints: ['get_quota'],
+    path: ROUTES.user.quota,
+    allowed: (page: Page) => page.locator('.stat-card'),
+  };
+  // One fresh login of the e2e user for the whole test (see support/access.ts).
+  let userContext: BrowserContext;
 
   test.beforeAll(async ({ browser }) => {
     const api = await BackendApi.open(browser);
@@ -216,9 +203,11 @@ test.describe('a rule takes effect for the user', () => {
     );
     await api.close();
     test.skip(Boolean(existing), 'The e2e user already has an own get_quota rule; the test would change it');
+    userContext = await loginUser(browser);
   });
 
   test.afterAll(async ({ browser }) => {
+    await userContext?.close();
     if (!createdRule) return;
     const api = await BackendApi.open(browser);
     const rule = (await api.rules()).find((r) => r.kind === createdRule!.kind && r.id === createdRule!.id);
@@ -226,9 +215,10 @@ test.describe('a rule takes effect for the user', () => {
     await api.close();
   });
 
-  test('an own rule flips "My resources" for the user, and deleting it restores the old answer', async ({ page, browser }) => {
-    const before = await quotaAllowed(browser);
-    const decision = before ? t.deny : t.allow;
+  test('an allow rule set on this page opens "My resources" for the user; deleting it closes it again', async ({ page, browser }) => {
+    // Without a rule the user is denied. Waits for a cached answer of an earlier test to run out.
+    await expectFeatureAllowed(userContext, MY_RESOURCES, false);
+    const decision = t.allow;
 
     await page.goto(ROUTES.admin.permissions);
     await page.getByRole('button', { name: t.createRule }).click();
@@ -258,7 +248,7 @@ test.describe('a rule takes effect for the user', () => {
     await expect(modal.getByRole('alert')).toContainText('already exists');
     await modal.getByRole('button', { name: 'Close' }).click();
 
-    await expectQuotaAllowed(browser, !before);
+    await expectFeatureAllowed(userContext, MY_RESOURCES, true);
 
     await page.getByRole('searchbox').fill('get_quota');
     await row.getByRole('button', { name: `${en.delete} Rule` }).click();
@@ -266,6 +256,6 @@ test.describe('a rule takes effect for the user', () => {
     await expect(row).toHaveCount(0);
     createdRule = undefined;
 
-    await expectQuotaAllowed(browser, before);
+    await expectFeatureAllowed(userContext, MY_RESOURCES, false);
   });
 });
